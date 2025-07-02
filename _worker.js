@@ -1,4 +1,3 @@
-//订阅地址：https://域名/ID/vless .
 import{connect as c}from"cloudflare:sockets";const a={
 	id:"511622",
 	uuid:"ab23f618-3f94-4d74-8c8b-d5703403b5be",
