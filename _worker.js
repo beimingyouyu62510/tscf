@@ -3,7 +3,7 @@ import { connect } from 'cloudflare:sockets';
 
 // 订阅配置参数
 let 哎呀呀这是我的ID啊 = '511622'; // 订阅路径
-let 哎呀呀这是我的VL密钥 = 'aa6afb24-210c-4fdc-979e-58f71a6f779f'; // UUID
+let 哎呀呀这是我的VL密钥 = 'ab23f618-3f94-4d74-8c8b-d5703403b5be'; // UUID
 let 我的优选 = [
   'laji.jisucf.cloudns.biz',
 ];
