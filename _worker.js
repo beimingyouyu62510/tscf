@@ -1,4 +1,3 @@
-// 订阅地址：http://域名/订阅路径
 import { connect } from 'cloudflare:sockets';
 
 // 订阅配置参数
@@ -168,17 +167,32 @@ async function 建立数据传输管道(WebSocket接口, TCP套接字, 初始数
   WebSocket接口.send(new Uint8Array([0, 0]));
   const 写入器 = TCP套接字.writable.getWriter();
   const 读取器 = TCP套接字.readable.getReader();
+
+  // 写入初始数据
   if (初始数据) await 写入器.write(初始数据);
-  WebSocket接口.addEventListener('message', async 事件 => {
-    try { await 写入器.write(事件.data); } catch {}
+
+  // WebSocket消息写入TCP
+  WebSocket接口.addEventListener('message', async (事件) => {
+    try {
+      await 写入器.write(事件.data);
+    } catch {
+      // 错误处理，避免中断
+    }
   });
+
   try {
+    // 从TCP读取数据并发送到WebSocket
     while (true) {
       const { value: 数据块, done: 读取完成 } = await 读取器.read();
       if (读取完成) break;
-      try { await WebSocket接口.send(数据块); } catch {}
+      try {
+        await WebSocket接口.send(数据块);
+      } catch {
+        // 错误处理，避免中断
+      }
     }
   } finally {
+    // 清理资源
     try { WebSocket接口.close(); } catch {}
     try { 读取器.cancel(); } catch {}
     try { 写入器.releaseLock(); } catch {}
