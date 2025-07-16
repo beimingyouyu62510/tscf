@@ -1,19 +1,3 @@
-// ====================================================================
-// Cloudflare Worker: VL over WebSocket + NAT64 + DOH + 兜底
-// --------------------------------------------------------------------
-// 环境变量 (Vars) 说明：
-//   UUID        必填，VL 用户的 UUID                        
-//   ID          可选，订阅路径 (默认 123456)                 
-//   PROXYIP     可选，反代兜底地址 "ip:sb"     
-//   NAT64       可选，是否启用 NAT64 (true|false，默认 true)      
-//   PROXYDOMAINS 可选，从环境变量读取要强制走 NAT64 的域名列表，每行一个，支持前缀“*”通配符  
-//   私钥        可选，自定义私钥内容，与 "私钥开关" 配合使用       
-//   私钥开关    可选，true|false，开启后需请求头带 my-key 防探测
-//   隐藏        可选，true|false，true 时订阅接口只返回嘲讽语
-//   嘲讽语      可选，自定义隐藏提示语                          
-//   启用反代功能 可选，true|false (默认 true)，是否启用反代兜底
-// ====================================================================
-
 import { connect } from 'cloudflare:sockets';
 
 ////////////////////////////////////////////////////////////////////////// DOH 模块 //////////////////////////////////////////////////////////////////////////
@@ -30,7 +14,7 @@ async function 查询最快IP(访问域名) {
       fetch(`${DOH}?name=${访问域名}&type=${type}`, {
         headers: { 'Accept': 'application/dns-json' }
       }).then(res => res.json())
-        .then(json => {
+        。then(json => {
           const ip = json.Answer?.find(r => r.type === (type === 'A' ? 1 : 28))?.data;
           if (ip) return ip;
           return Promise.reject(`无 ${type} 记录`);
@@ -62,7 +46,7 @@ let 我的优选TXT = [''];
 let 启用反代功能 = true;
 let 反代IP = 'cf.jisucf.cloudns.ch';
 
-let NAT64 = true;
+let NAT64 = false;
 let proxydomains = ["*openai.com", "*twitch.tv", "*ttvnw.net", "*tapecontent.net", "*cloudatacdn.com", "*.loadshare.org"];
 
 let 我的节点名字 = 'ts-cf';
