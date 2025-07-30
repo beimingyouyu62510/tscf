@@ -4,8 +4,8 @@ addEventListener('fetch', event => {
 
 async function handleRequest(request) {
   const url = new URL(request.url);
-  const VALID_UUID = env.UUID || 'ab23f618-3f94-4d74-8c8b-d5703403b5be'; // 从环境变量获取 UUID
-  const PROXY_IPS = ['cf.jisucf.cloudns.ch'];
+  const VALID_UUID = env.UUID || 'your-uuid-here'; // 从环境变量获取 UUID
+  const PROXY_IPS = ['20.187.89.16', '129.154.199.251', '146.56.149.205', '47.74.51.138'];
   const PROXY_PORT = env.PROXY_PORT || '443';
   const SUB_PATH = '/sub';
   const FAKE_API_PATH = '/api';
@@ -16,7 +16,7 @@ async function handleRequest(request) {
       return handleSubscription(url, VALID_UUID);
     }
     if (url.pathname === FAKE_API_PATH) {
-      return new Response(JSON.stringify({ status: 'ok', version: '1.0.0' }), {
+      return new Response(JSON.stringify({ status: 'ok', version: '1.0.0', ts: Date.now() }), {
         headers: { 'Content-Type': 'application/json' },
         status: 200
       });
