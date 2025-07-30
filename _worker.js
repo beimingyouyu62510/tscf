@@ -1,20 +1,19 @@
-const VALID_UUID = 'ab23f618-3f94-4d74-8c8b-d5703403b5be'; // 替换为你的 UUID
-const PROXY_IPS = [
-  'cf.jisucf.cloudns.ch' // 通用
-];
-const PROXY_PORT = '443';
-const SUB_PATH = '/sub';
-const FAKE_API_PATH = '/api';
-
 addEventListener('fetch', event => {
   event.respondWith(handleRequest(event.request));
 });
 
 async function handleRequest(request) {
   const url = new URL(request.url);
+  const VALID_UUID = env.UUID || 'ab23f618-3f94-4d74-8c8b-d5703403b5be'; // 从环境变量获取 UUID
+  const PROXY_IPS = ['cf.jisucf.cloudns.ch'];
+  const PROXY_PORT = env.PROXY_PORT || '443';
+  const SUB_PATH = '/sub';
+  const FAKE_API_PATH = '/api';
+
+  // 处理非 WebSocket 请求
   if (request.headers.get('Upgrade') !== 'websocket') {
     if (url.pathname === SUB_PATH) {
-      return handleSubscription(url);
+      return handleSubscription(url, VALID_UUID);
     }
     if (url.pathname === FAKE_API_PATH) {
       return new Response(JSON.stringify({ status: 'ok', version: '1.0.0' }), {
@@ -28,6 +27,7 @@ async function handleRequest(request) {
     });
   }
 
+  // UUID 验证
   const uuid = url.pathname.slice(1);
   if (uuid !== VALID_UUID) {
     return new Response(JSON.stringify({ error: 'Invalid UUID' }), {
@@ -36,25 +36,26 @@ async function handleRequest(request) {
     });
   }
 
-  return handleWebSocket(request);
+  // WebSocket 处理
+  return handleWebSocket(request, PROXY_IPS, PROXY_PORT);
 }
 
-function handleSubscription(url) {
-  const config = `vless://${VALID_UUID}@${url.host}:443?security=tls&type=ws&path=/?ed=2048&host=${url.host}#CF-VLESS`;
+function handleSubscription(url, uuid) {
+  const config = `vless://${uuid}@${url.host}:443?security=tls&type=ws&path=/?ed=2048&host=${url.host}#CF-VLESS`;
   return new Response(btoa(config), {
     headers: { 'Content-Type': 'text/plain' },
     status: 200
   });
 }
 
-async function handleWebSocket(request) {
+async function handleWebSocket(request, proxyIps, proxyPort) {
   try {
     const [client, server] = Object.values(new WebSocketPair());
     server.accept();
     let targetWs;
-    for (let i = 0; i < PROXY_IPS.length; i++) {
+    for (let i = 0; i < proxyIps.length; i++) {
       try {
-        const response = await fetch(`wss://${PROXY_IPS[i]}:${PROXY_PORT}`, {
+        const response = await fetch(`wss://${proxyIps[i]}:${proxyPort}`, {
           headers: { 'Upgrade': 'websocket' }
         });
         targetWs = response.webSocket;
@@ -63,8 +64,8 @@ async function handleWebSocket(request) {
           break;
         }
       } catch (e) {
-        console.error(`Proxy IP ${PROXY_IPS[i]} failed: ${e.message}`);
-        if (i === PROXY_IPS.length - 1) {
+        console.error(`Proxy IP ${proxyIps[i]} failed: ${e.message}`);
+        if (i === proxyIps.length - 1) {
           return new Response(JSON.stringify({ error: 'All proxy IPs failed' }), {
             headers: { 'Content-Type': 'application/json' },
             status: 502
