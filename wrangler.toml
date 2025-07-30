@@ -1,0 +1,8 @@
+name = "tscf"
+compatibility_date = "2025-07-30"
+main = "_worker.js"
+
+[vars]
+UUID = "ab23f618-3f94-4d74-8c8b-d5703403b5be" # 替换为你的 UUID
+PROXY_IP = "cf.jisucf.cloudns.ch"
+PROXY_PORT = "443"
