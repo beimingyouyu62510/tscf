@@ -1,4 +1,4 @@
-name = "tscf"
+name = "vless-worker"
 compatibility_date = "2025-07-30"
 main = "_worker.js"
 
