@@ -1,499 +1,491 @@
-//1、天书版12.0重构版队列传输模式，本版再次改变传输逻辑，大幅度提升传输稳定性，建议pages部署
-//2、新增doh并发转换直接访问目标，不再依赖客户端dns，大幅度提高响应速度及可靠的隐私性
-//3、clash新增支持生成带负载均衡的配置文件，只需要给想添加到负载均衡的节点名中添加'负载均衡'字样就行，示例127.0.0.1:443#US负载均衡
-//4、支持反代开关，私钥开关，订阅隐藏开关功能，clash私钥防止被薅请求数
-//5、支持SOCKS5，支持S5全局反代，SOCKS5和原始反代只能二选一，SOCKS5握手过程较为繁杂，建议有高速稳定SOCKS5的人使用
-//6、可能支持的环境变量名【SOCKS5】账号，【SOCKS5OPEN】开关S5反代true或false，【SOCKS5GLOBAL】全局S5反代落地true或false，【PROXYIP】反代IP，到相关代码段落看看先【100行左右】！！！
-//7、不用在意脚本内那些奇怪的变量名，根据后面注释的备注去改，大概也就配置区块看一下备注就行，clash配置在底部，懂的可以根据自身需求修改
-//8、纯手搓配置，去除任何API外链，直接改好了部署就行，这样安全性史无前例
-//9、通用订阅不支持私钥功能，使用通用订阅需关闭私钥功能再订阅节点
-//10、由于本人仅使用openclash和clash meta，其他平台软件均未测试，请自行测试研究，要是不能用就算了，不负责改进，继续概不负责^_^
-//11、由于本人纯菜，很多代码解释都是根据自己的理解瞎编的【当前的代码解释正确率已接近100%】，专业的无视就好，单纯为了帮助小白理解代码大致原理^_^
-//12、重要！！！请大家不要发大群，要是因为传播广泛被封了本人技术有限没有能力进行修复
-import { connect } from 'cloudflare:sockets';
-//////////////////////////////////////////////////////////////////////////配置区块////////////////////////////////////////////////////////////////////////
-let 哎呀呀这是我的ID啊 = "511622"; //实际上这是你的订阅路径，支持任意大小写字母和数字，[域名/ID]进入订阅页面
-let 哎呀呀这是我的VL密钥 = "ab23f618-3f94-4d74-8c8b-d5703403b5be"; //这是真实的UUID，通用订阅会进行验证，建议修改为自己的规范化UUID
-
-let 私钥开关 = false //是否启用私钥功能，true启用，false不启用，因为私钥功能只支持clash，如果打算使用通用订阅则需关闭私钥功能
-let 咦这是我的私钥哎 = ""; //这是你的私钥，提高隐秘性安全性，就算别人扫到你的域名也无法链接，再也不怕别人薅请求数了^_^
-
-let 隐藏订阅 = false //选择是否隐藏订阅页面，false不隐藏，true隐藏，当然隐藏后自己也无法订阅，因为配置固定，适合自己订阅后就隐藏，防止被爬订阅，并且可以到下方添加嘲讽语^_^
-let 嘲讽语 = "哎呀你找到了我，但是我就是不给你看，气不气，嘿嘿嘿" //隐藏订阅后，真实的订阅页面就会显示这段话，想写啥写啥
-
-let 我的优选 = ['laji.jisucf.cloudns.biz'] //格式127.0.0.1:443#US@notls或[2606:4700:3030:0:4563:5696:a36f:cdc5]:2096#US，如果#US不填则使用统一名称，如果@notls不填则默认使用TLS，每行一个，如果不填任何节点会生成一个默认自身域名的小黄云节点
-let 我的优选TXT =[ //支持多TXT链接，可以汇聚各路大神的节点【格式相同的情况下】，方便节点恐慌症同学
-  '',
-] //优选TXT路径[https://ip.txt]，表达格式与上述相同，使用TXT时脚本内部填写的节点无效，二选一
-
-let 启用反代功能 = true //选择是否启用反代功能【总开关】，false，true，现在你可以自由的选择是否启用反代功能了
-let 反代IP = 'ProxyIP.Vultr.CMLiussss.net' //反代IP或域名，反代IP端口一般情况下不用填写，如果你非要用非标反代的话，可以填'ts.hpc.tw:443'这样
-
-let 启用NAT64反代 = false //NAT64如果启用，优先级高于S5反代
-let 我的NAT64地址 = '[2001:67c:2960:6464::]' //NAT64地址，支持带端口，示例[2001:67c:2960:6464::]:443
-
-let 启用SOCKS5反代 = false //如果启用此功能，原始反代将失效
-let 启用SOCKS5全局反代 = false //选择是否启用SOCKS5全局反代，启用后所有访问都是S5的落地【无论你客户端选什么节点】，访问路径是客户端--CF--SOCKS5，当然启用此功能后延迟=CF+SOCKS5，带宽取决于SOCKS5的带宽，不再享受CF高速和随时满带宽的待遇
-let 我的SOCKS5账号 = 'admin:admin@43.153.64.167:1080#美国' //格式'账号:密码@地址:端口'
-
-let 我的节点名字 = 'ts-cf' //自己的节点名字【统一名称】
-
-let 启动控流机制 = false; //选择是否启动控流机制，true启动，false关闭，使用控流可提升连接稳定性，适合轻度使用，日常使用应该绰绰有余
-
-let DOH服务器列表 = [ //DOH地址，基本上已经涵盖市面上所有通用地址了，一般无需修改
-  "https://dns.google/dns-query",
-  "https://cloudflare-dns.com/dns-query",
-  "https://1.1.1.1/dns-query",
-  "https://dns.quad9.net/dns-query",
-  /* //过多的doh会造成多余的资源消耗，关闭掉一部分，需要的可自行启用
-  "https://doh.opendns.com/dns-query",
-  "https://dns.adguard.com/dns-query",
-  "https://doh.dns.yandex.net/dns-query",
-  "https://doh.libredns.gr/dns-query",
-  "https://doh-jp.blahdns.com/dns-query",
-  "https://doh-de.blahdns.com/dns-query",
-  //国内DOH
-  "https://doh.dnspod.cn/dns-query", 
-  "https://doh.114dns.com/dns-query",
-  */
-];
-//////////////////////////////////////////////////////////////////////////网页入口////////////////////////////////////////////////////////////////////////
-export default {
-  async fetch(访问请求, env) {
-    const 读取我的请求标头 = 访问请求.headers.get('Upgrade');
-    const url = new URL(访问请求.url);
-    if (!读取我的请求标头 || 读取我的请求标头 !== 'websocket') {
-      if (我的优选TXT) {
-        const 链接数组 = Array.isArray(我的优选TXT) ? 我的优选TXT : [我的优选TXT];
-        const 所有节点 = [];
-        for (const 链接 of 链接数组) {
-          try {
-            const 响应 = await fetch(链接);
-            const 文本 = await 响应.text();
-            const 节点 = 文本.split('\n').map(line => line.trim()).filter(line => line);
-            所有节点.push(...节点);
-          } catch (e) {
-            console.warn(`无法获取或解析链接: ${链接}`, e);
-          }
-        }
-        if (所有节点.length > 0) {
-          我的优选 = 所有节点;
-        }
-      }
-      switch (url.pathname) {
-        case `/${哎呀呀这是我的ID啊}`: {
-          if (隐藏订阅) {
-            return new Response (`${嘲讽语}`, { status: 200 });
-          } else {
-            const 订阅页面 = 给我订阅页面(哎呀呀这是我的ID啊, 访问请求.headers.get('Host'));
-            return new Response(`${订阅页面}`, {
-              status: 200,
-              headers: { "Content-Type": "text/plain;charset=utf-8" }
-            });
-          }
-        }
-        case `/${哎呀呀这是我的ID啊}/${转码}${转码2}`: {
-          if (隐藏订阅) {
-            return new Response (`${嘲讽语}`, { status: 200 });
-          } else {
-            const 通用配置文件 = 给我通用配置文件(访问请求.headers.get('Host'));
-            return new Response(`${通用配置文件}`, {
-              status: 200,
-              headers: { "Content-Type": "text/plain;charset=utf-8" }
-            });
-          }
-        }
-        case `/${哎呀呀这是我的ID啊}/${小猫}${咪}`: {
-          if (隐藏订阅) {
-            return new Response (`${嘲讽语}`, { status: 200 });
-          } else {
-            const 小猫咪配置文件 = 给我小猫咪配置文件(访问请求.headers.get('Host'));
-            return new Response(`${小猫咪配置文件}`, {
-              status: 200,
-              headers: { "Content-Type": "text/plain;charset=utf-8" }
-            });
-          }
-        }
-        default:
-          return new Response('Hello World!', { status: 200 });
-      }
-    } else if (读取我的请求标头 === 'websocket'){
-      //这是读取环境变量的函数，由于本人并不使用，也没去测试是否有隐藏bug，懂的人可自行尝试
-      const 读取环境变量 = (name, fallback, env) => {
-        const raw = import.meta?.env?.[name] ?? env?.[name];
-        if (raw === undefined || raw === null || raw === '') return fallback;
-        if (typeof raw === 'string') {
-          const trimmed = raw.trim();
-          if (trimmed === 'true') return true;
-          if (trimmed === 'false') return false;
-          if (trimmed.includes('\n')) {
-            return trimmed.split('\n').map(item => item.trim()).filter(Boolean);
-          }
-          if (!isNaN(trimmed) && trimmed !== '') return Number(trimmed);
-          return trimmed;
-        }
-        return raw;
-      };
-      反代IP = 读取环境变量('PROXYIP', 反代IP, env);
-      我的NAT64地址 = 读取环境变量('NAT64', 我的NAT64地址, env)
-      我的SOCKS5账号 = 读取环境变量('SOCKS5', 我的SOCKS5账号, env);
-      启用SOCKS5反代 = 读取环境变量('SOCKS5OPEN', 启用SOCKS5反代, env);
-      启用SOCKS5全局反代 = 读取环境变量('SOCKS5GLOBAL', 启用SOCKS5全局反代, env);
-      if (私钥开关) {
-        const 验证我的私钥 = 访问请求.headers.get('my-key')
-        if (验证我的私钥 === 咦这是我的私钥哎) {
-          return await 升级WS请求(访问请求);
-        }
-      } else {
-        return await 升级WS请求(访问请求);
-      }
-    }
-  }
+/*
+代码基本都抄的CM大佬的项目
+支持trojan和vless双协议
+ws路径示例：/?ed=2560&proxyip=ProxyIP.SG.CMLiussss.net:443&socks5=user:passsword@domain:443&http=user:passsword@domain:443&proxyall=1
+ipv6地址需要[ipv6]
+有proxyall参数即为全局代理，如果只写proxyall为全走直连，同时写了socks5和http时socks5优先
+*/
+import {connect} from 'cloudflare:sockets';
+const uuid = 'ab23f618-3f94-4d74-8c8b-d5703403b5be';//vless使用的uuid
+const password = '511622';//trojan使用的密码
+const concurrentOnlyDomain = false;//只对域名并发开关
+const concurrency = 4;//socket获取并发数
+const dohEndpoints = ['https://cloudflare-dns.com/dns-query', 'https://dns.google/dns-query'];
+const dohFetchOptions = {method: 'POST', headers: {'content-type': 'application/dns-message'}};
+const proxyIpAddrs = {US: 'cf.jisucf.cloudns.ch'};//分区域proxyip
+const finallyProxyHost = 'ProxyIP.CMLiussss.net';//兜底proxyip
+const coloRegions = {
+    JP: new Set(['FUK', 'ICN', 'KIX', 'NRT', 'OKA']),
+    EU: new Set([
+        'ACC', 'ADB', 'ALA', 'ALG', 'AMM', 'AMS', 'ARN', 'ATH', 'BAH', 'BCN', 'BEG', 'BGW', 'BOD', 'BRU', 'BTS', 'BUD', 'CAI',
+        'CDG', 'CPH', 'CPT', 'DAR', 'DKR', 'DMM', 'DOH', 'DUB', 'DUR', 'DUS', 'DXB', 'EBB', 'EDI', 'EVN', 'FCO', 'FRA', 'GOT',
+        'GVA', 'HAM', 'HEL', 'HRE', 'IST', 'JED', 'JIB', 'JNB', 'KBP', 'KEF', 'KWI', 'LAD', 'LED', 'LHR', 'LIS', 'LOS', 'LUX',
+        'LYS', 'MAD', 'MAN', 'MCT', 'MPM', 'MRS', 'MUC', 'MXP', 'NBO', 'OSL', 'OTP', 'PMO', 'PRG', 'RIX', 'RUH', 'RUN', 'SKG',
+        'SOF', 'STR', 'TBS', 'TLL', 'TLV', 'TUN', 'VIE', 'VNO', 'WAW', 'ZAG', 'ZRH']),
+    AS: new Set([
+        'ADL', 'AKL', 'AMD', 'BKK', 'BLR', 'BNE', 'BOM', 'CBR', 'CCU', 'CEB', 'CGK', 'CMB', 'COK', 'DAC', 'DEL', 'HAN', 'HKG',
+        'HYD', 'ISB', 'JHB', 'JOG', 'KCH', 'KHH', 'KHI', 'KTM', 'KUL', 'LHE', 'MAA', 'MEL', 'MFM', 'MLE', 'MNL', 'NAG', 'NOU',
+        'PAT', 'PBH', 'PER', 'PNH', 'SGN', 'SIN', 'SYD', 'TPE', 'ULN', 'VTE'])
 };
-////////////////////////////////////////////////////////////////////////脚本主要架构//////////////////////////////////////////////////////////////////////
-//第一步，读取和构建基础访问结构
-async function 升级WS请求(访问请求) {
-  const 创建WS接口 = new WebSocketPair();
-  const [客户端, WS接口] = Object.values(创建WS接口);
-  const 读取WS数据头 = 访问请求.headers.get('sec-websocket-protocol'); //读取访问标头中的WS通信数据
-  const 转换二进制数据 = 转换WS数据头为二进制数据(读取WS数据头); //解码目标访问数据，传递给TCP握手进程
-  await 解析VL标头(转换二进制数据, WS接口); //解析VL数据并进行TCP握手
-  return new Response(null, { status: 101, webSocket: 客户端 }); //一切准备就绪后，回复客户端WS连接升级成功
-}
-function 转换WS数据头为二进制数据(WS数据头) {
-  const base64URL转换为标准base64 = WS数据头.replace(/-/g, '+').replace(/_/g, '/');
-  const 解码base64 = atob(base64URL转换为标准base64);
-  const 转换为二进制数组 = Uint8Array.from(解码base64, c => c.charCodeAt(0));
-  return 转换为二进制数组;
-}
-//第二步，解读VL协议数据，创建TCP握手
-async function 解析VL标头(二进制数据, WS接口, TCP接口) {
-  let 识别地址类型, 地址信息索引, 访问地址, 地址长度;
-  try {
-    if (!私钥开关 && 验证VL的密钥(二进制数据.slice(1, 17)) !== 哎呀呀这是我的VL密钥) throw new Error('UUID验证失败');
-    const 获取数据定位 = 二进制数据[17];
-    const 提取端口索引 = 18 + 获取数据定位 + 1;
-    const 访问端口 = new DataView(二进制数据.buffer, 提取端口索引, 2).getUint16(0);
-    if (访问端口 === 53) throw new Error('拒绝DNS连接')
-    const 提取地址索引 = 提取端口索引 + 2;
-    识别地址类型 = 二进制数据[提取地址索引];
-    地址信息索引 = 提取地址索引 + 1;
-    switch (识别地址类型) {
-      case 1:
-        地址长度 = 4;
-        访问地址 = 二进制数据.slice(地址信息索引, 地址信息索引 + 地址长度).join('.');
-        break;
-      case 2:
-        地址长度 = 二进制数据[地址信息索引];
-        地址信息索引 += 1;
-        const 访问域名 = new TextDecoder().decode(二进制数据.slice(地址信息索引, 地址信息索引 + 地址长度));
-        访问地址 = await 查询最快IP(访问域名);
-        if (访问地址 !== 访问域名) 识别地址类型 = 访问地址.includes(':') ? 3 : 1;
-        break;
-      case 3:
-        地址长度 = 16;
-        const ipv6 = [];
-        const 读取IPV6地址 = new DataView(二进制数据.buffer, 地址信息索引, 16);
-        for (let i = 0; i < 8; i++) ipv6.push(读取IPV6地址.getUint16(i * 2).toString(16));
-        访问地址 = ipv6.join(':');
-        break;
-      default:
-        throw new Error ('无效的访问地址');
-    }
-    if (启用反代功能 && 启用SOCKS5反代 && 启用SOCKS5全局反代) {
-      TCP接口 = await 创建SOCKS5接口(识别地址类型, 访问地址, 访问端口);
-    } else {
-      try {
-      TCP接口 = connect({ hostname: 访问地址, port: 访问端口 });
-      await TCP接口.opened;
-      } catch {
-        if (启用反代功能) {
-          if (启用NAT64反代 && 识别地址类型 === 1) {
-            const [NAT64地址, NAT64端口] = 解析地址端口(我的NAT64地址);
-            const 转换NAT64地址 = `[${NAT64地址}${访问地址.split('.').map(n=>(+n).toString(16).padStart(2,'0')).join('').replace(/(.{4})/, '$1:')}]`;
-            TCP接口 = connect({ hostname: 转换NAT64地址, port: NAT64端口 });
-          } else if (启用SOCKS5反代) {
-            TCP接口 = await 创建SOCKS5接口(识别地址类型, 访问地址, 访问端口);
-          } else {
-            let [反代IP地址, 反代IP端口] = 解析地址端口(反代IP);
-            TCP接口 = connect({ hostname: 反代IP地址, port: 反代IP端口});
-          }
+const coloToProxyMap = new Map(Object.entries(coloRegions).flatMap(([region, colos]) => Array.from(colos, colo => [colo, proxyIpAddrs[region]])));
+const uuidToBytes = new Uint8Array(uuid.replace(/-/g, '').match(/.{2}/g).map(byte => parseInt(byte, 16)));
+const [uuidPart1, uuidPart2] = [new DataView(uuidToBytes.buffer).getBigUint64(0), new DataView(uuidToBytes.buffer).getBigUint64(8)];
+const expectedHash = sha224Hash(password);
+const expectedHashBytes = new TextEncoder().encode(expectedHash);
+const [textEncoder, utf8Decoder, socks5Init] = [new TextEncoder(), new TextDecoder(), new Uint8Array([5, 2, 0, 2])];
+const html = `<html><head><title>404 Not Found</title></head><body><center><h1>404 Not Found</h1></center><hr><center>nginx/1.25.3</center></body></html>`;
+function sha224Hash(message) {
+    const kConstants = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be,
+        0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa,
+        0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85,
+        0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+        0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f,
+        0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+    ];
+    const toUtf8 = (str) => {return unescape(encodeURIComponent(str))};
+    const bytesToHex = (byteArray) => {
+        let hexString = '';
+        for (let i = 0; i < byteArray.length; i++) {
+            hexString += ((byteArray[i] >>> 4) & 0x0F).toString(16);
+            hexString += (byteArray[i] & 0x0F).toString(16);
         }
-      }
-    }
-    await TCP接口.opened;
-    const 传输数据 = TCP接口.writable.getWriter();
-    const 读取数据 = TCP接口.readable.getReader();
-    await 传输数据.write(二进制数据.slice(地址信息索引 + 地址长度));
-    建立传输管道(传输数据, 读取数据, WS接口); //建立WS接口与TCP接口的传输管道
-  } catch (e) {
-    return new Response(`连接握手失败: ${e}`, { status: 500 });
-  }
-}
-function 验证VL的密钥(字节数组, 起始位置 = 0) {
-  const 十六进制表 = Array.from({ length: 256 }, (_, 值) =>
-    (值 + 256).toString(16).slice(1)
-  );
-  const 分段结构 = [4, 2, 2, 2, 6];
-  let 当前索引 = 起始位置;
-  const 格式化UUID = 分段结构
-    .map(段长度 =>
-      Array.from({ length: 段长度 }, () => 十六进制表[字节数组[当前索引++]]).join('')
-    )
-    .join('-')
-    .toLowerCase();
-  return 格式化UUID;
-}
-async function 查询最快IP(访问域名) {
-  const 构造请求 = (type) =>
-    DOH服务器列表.map(DOH =>
-      fetch(`${DOH}?name=${访问域名}&type=${type}`, {
-        headers: { 'Accept': 'application/dns-json' }
-      }).then(res => res.json())
-        .then(json => {
-          const ip = json.Answer?.find(r => r.type === (type === 'A' ? 1 : 28))?.data;
-          if (ip) return ip;
-          return Promise.reject(`无 ${type} 记录`);
-        })
-        .catch(err => Promise.reject(`${DOH} ${type} 请求失败: ${err}`))
-    );
-  try {
-    return await Promise.any(构造请求('A'));
-  } catch {
-    return 访问域名;
-  }
-}
-function 解析地址端口(地址段) {
-  let 地址, 端口;
-  if (地址段.startsWith('[')) {
-    [地址, 端口 = 443] = 地址段.slice(1, -1).split(']:');
-  } else {
-    [地址, 端口 = 443] = 地址段.split(':')
-  }
-  return [地址, 端口];
-}
-//第三步，创建客户端WS-CF-目标的传输通道并监听状态
-async function 建立传输管道(传输数据, 读取数据, WS接口, 传输队列 = Promise.resolve(), 字节计数 = 0, 累计传输字节数 = 0, 已结束 = false) {
-  WS接口.accept();
-  WS接口.send(new Uint8Array([0, 0]));
-  WS接口.addEventListener('message', event => 传输队列 = 传输队列.then(async () => {
-    const WS数据 = new Uint8Array(event.data);
-    await 传输数据.write(WS数据);
-    累计传输字节数 += WS数据.length;
-  }).catch());
-  const 保活 = setInterval(async () => {
-    if (已结束) {
-      clearInterval(保活);
-    } else {
-      await 传输数据.write(new Uint8Array(0));
-    }
-  }, 30000);
-  while (true) {
-    const { done: 流结束, value: 返回数据 } = await 读取数据.read();
-    if (流结束) { 已结束 = true; break; }
-    if (!返回数据 || 返回数据.length === 0) continue;
-    传输队列 = 传输队列.then(() => WS接口.send(返回数据)).catch();
-    累计传输字节数 += 返回数据.length;
-    if (启动控流机制 && (累计传输字节数 - 字节计数) > 2*1024*1024 && 返回数据.length < 4096) {
-      传输队列 = 传输队列.then(async () => await new Promise(resolve => setTimeout(resolve, 200))).catch();
-      字节计数 = 累计传输字节数;
-    }
-  }
-}
-//////////////////////////////////////////////////////////////////////////SOCKS5部分//////////////////////////////////////////////////////////////////////
-async function 创建SOCKS5接口(识别地址类型, 访问地址, 访问端口, 转换访问地址, 传输数据, 读取数据) {
-  const { 账号, 密码, 地址, 端口 } = await 获取SOCKS5账号(我的SOCKS5账号);
-  const SOCKS5接口 = connect({ hostname: 地址, port: 端口 });
-  try {
-    await SOCKS5接口.opened;
-    传输数据 = SOCKS5接口.writable.getWriter();
-    读取数据 = SOCKS5接口.readable.getReader();
-    const 转换数组 = new TextEncoder(); //把文本内容转换为字节数组，如账号，密码，域名，方便与S5建立连接
-    const 构建S5认证 = new Uint8Array([5, 2, 0, 2]); //构建认证信息,支持无认证和用户名/密码认证
-    await 传输数据.write(构建S5认证); //发送认证信息，确认目标是否需要用户名密码认证
-    const 读取认证要求 = (await 读取数据.read()).value;
-    if (读取认证要求[1] === 0x02) { //检查是否需要用户名/密码认证
-      if (!账号 || !密码) {
-        throw new Error (`未配置账号密码`);
-      }
-      const 构建账号密码包 = new Uint8Array([ 1, 账号.length, ...转换数组.encode(账号), 密码.length, ...转换数组.encode(密码) ]); //构建账号密码数据包，把字符转换为字节数组
-      await 传输数据.write(构建账号密码包); //发送账号密码认证信息
-      const 读取账号密码认证结果 = (await 读取数据.read()).value;
-      if (读取账号密码认证结果[0] !== 0x01 || 读取账号密码认证结果[1] !== 0x00) { //检查账号密码认证结果，认证失败则退出
-        throw new Error (`账号密码错误`);
-      }
-    }
-    switch (识别地址类型) {
-      case 1: // IPv4
-        转换访问地址 = new Uint8Array( [1, ...访问地址.split('.').map(Number)] );
-        break;
-      case 2: // 域名
-        转换访问地址 = new Uint8Array( [3, 访问地址.length, ...转换数组.encode(访问地址)] );
-        break;
-      case 3: // IPv6
-        转换访问地址 = new Uint8Array( [4, ...访问地址.split(':').flatMap(x => [parseInt(x.slice(0, 2), 16), parseInt(x.slice(2), 16)])] );
-        break;
-    }
-    const 构建转换后的访问地址 = new Uint8Array([ 5, 1, 0, ...转换访问地址, 访问端口 >> 8, 访问端口 & 0xff ]); //构建转换好的地址消息
-    await 传输数据.write(构建转换后的访问地址); //发送转换后的地址
-    const 检查返回响应 = (await 读取数据.read()).value;
-    if (检查返回响应[0] !== 0x05 || 检查返回响应[1] !== 0x00) {
-      throw new Error (`目标地址连接失败，访问地址: ${访问地址}，地址类型: ${识别地址类型}`);
-    }
-    传输数据.releaseLock();
-    读取数据.releaseLock();
-    return SOCKS5接口;
-  } catch (e) {
-    传输数据.releaseLock();
-    读取数据.releaseLock();
-    SOCKS5接口.close();
-    throw new Error (`SOCKS5握手失败: ${e}`);
-  }
-}
-async function 获取SOCKS5账号(SOCKS5) {
-  const 分隔账号 = SOCKS5.lastIndexOf("@");
-  const 账号段 = SOCKS5.slice(0, 分隔账号);
-  const 地址段 = SOCKS5.slice(分隔账号 + 1);
-  const [账号, 密码] = [账号段.slice(0, 账号段.lastIndexOf(":")), 账号段.slice(账号段.lastIndexOf(":") + 1)];
-  const [地址, 端口] = 解析地址端口(地址段);
-  return { 账号, 密码, 地址, 端口 };
-}
-//////////////////////////////////////////////////////////////////////////订阅页面////////////////////////////////////////////////////////////////////////
-let 转码 = 'vl', 转码2 = 'ess', 符号 = '://', 小猫 = 'cla', 咪 = 'sh', 我的私钥;
-if (私钥开关) {
-  我的私钥 = `my-key: ${咦这是我的私钥哎}`
-} else {
-  我的私钥 = ""
-}
-function 给我订阅页面(哎呀呀这是我的ID啊, hostName) {
-return `
-1、本worker的私钥功能只支持${小猫}${咪}，仅open${小猫}${咪}和${小猫}${咪} meta测试过，其他${小猫}${咪}类软件自行测试
-2、若使用通用订阅请关闭私钥功能
-3、其他需求自行研究
-通用的：https${符号}${hostName}/${哎呀呀这是我的ID啊}/${转码}${转码2}
-猫咪的：https${符号}${hostName}/${哎呀呀这是我的ID啊}/${小猫}${咪}
-`;
-}
-function 给我通用配置文件(hostName) {
-我的优选.push(`${hostName}:443#备用节点`)
-if (私钥开关) {
-  return `请先关闭私钥功能`
-}else {
-  return 我的优选.map(获取优选 => {
-    const [主内容,tls] = 获取优选.split("@");
-    const [地址端口, 节点名字 = 我的节点名字] = 主内容.split("#");
-    const 拆分地址端口 = 地址端口.split(":");
-    const 端口 =拆分地址端口.length > 1 ? Number(拆分地址端口.pop()) : 443;
-    const 地址 = 拆分地址端口.join(":");
-    const TLS开关 = tls === 'notls' ? 'security=none' : 'security=tls';
-    return `${转码}${转码2}${符号}${哎呀呀这是我的VL密钥}@${地址}:${端口}?encryption=none&${TLS开关}&sni=${hostName}&type=ws&host=${hostName}&path=%2F%3Fed%3D2560#${节点名字}`;
-  }).join("\n");
-}
-}
-function 给我小猫咪配置文件(hostName) {
-  我的优选.push(`${hostName}:443#备用节点`)
-  function 生成节点(节点输入列表, hostName) {
-    const 节点配置列表 = [];
-    const 节点名称列表 = [];
-    const 负载均衡节点名称列表 = [];
-    for (const 获取优选 of 节点输入列表) {
-      const [主内容, tls] = 获取优选.split("@");
-      const [地址端口, 节点名字 = "默认节点"] = 主内容.split("#");
-      const 拆分地址端口 = 地址端口.split(":");
-      const 端口 = 拆分地址端口.length > 1 ? Number(拆分地址端口.pop()) : 443;
-      const 地址 = 拆分地址端口.join(":").replace(/^\[(.+)\]$/, '$1');
-      const TLS开关 = tls === "notls" ? "false" : "true";
-      const 名称 = `${节点名字}-${地址}-${端口}`;
-      节点配置列表.push(`- name: ${名称}
-  type: ${转码}${转码2}
-  server: ${地址}
-  port: ${端口}
-  uuid: ${哎呀呀这是我的VL密钥}
-  udp: false
-  tls: ${TLS开关}
-  sni: ${hostName}
-  network: ws
-  ws-opts:
-    path: "/?ed=2560"
-    headers:
-      Host: ${hostName}
-      ${我的私钥}`);
-    节点名称列表.push(`    - ${名称}`);
-      if (名称.includes("负载均衡")) {
-        负载均衡节点名称列表.push(`    - ${名称}`);
-      }
-    }
-    let 负载均衡配置 = "";
-    let 负载均衡组名 = "负载均衡";
-    if (负载均衡节点名称列表.length > 0) {
-      负载均衡配置 = `- name: ${负载均衡组名}
-  type: load-balance
-  strategy: round-robin #负载均衡配置，round-robin正常轮询，consistent-hashing散列轮询
-  url: http://www.gstatic.com/generate_204
-  interval: 60 #自动测试间隔
-  proxies:
-${负载均衡节点名称列表.join("\n")}`;
-    }
-    return {
-      节点配置列表,
-      节点名称列表,
-      负载均衡配置,
-      负载均衡组名: 负载均衡节点名称列表.length > 0 ? 负载均衡组名 : null,
+        return hexString;
     };
-  }  
-  const { 节点配置列表, 节点名称列表, 负载均衡配置, 负载均衡组名 } = 生成节点(我的优选, hostName);
-  const 生成节点配置 = 节点配置列表.join("\n");
-  const 选择组 = `- name: 🚀 节点选择
-  type: select
-  proxies:
-    - 自动选择
-${负载均衡组名 ? `    - ${负载均衡组名}` : ""}
-${节点名称列表.join("\n")}`;
-  const 自动选择组 = `- name: 自动选择
-  type: url-test
-  url: http://www.gstatic.com/generate_204
-  interval: 60 #自动测试间隔
-  tolerance: 30
-  proxies:
-${负载均衡组名 ? `    - ${负载均衡组名}` : ""}
-${节点名称列表.join("\n")}`;
-return `
-# DNS原则上已经不需要了，保留只是为了防止可能的客户端兼容性问题
-dns:
-  nameserver:
-    - 180.76.76.76
-    - 2400:da00::6666
-  fallback:
-    - 8.8.8.8
-    - 2001:4860:4860::8888
-proxies:
-${生成节点配置}
-proxy-groups:
-${选择组}
-${自动选择组}
-${负载均衡配置 || ""}
-- name: 漏网之鱼
-  type: select
-  proxies:
-    - DIRECT
-    - 🚀 节点选择
-rules:
-# 本人自用规则，不一定适合所有人所有客户端，如客户端因规则问题无法订阅就删除对应规则吧，每个人都有自己习惯的规则，自行研究哦
-# 策略规则，建议使用meta内核，部分规则需打开${小猫}${咪} mate的使用geoip dat版数据库，比如TG规则就需要，或者自定义geoip的规则订阅
-# 这是geoip的规则订阅链接，https://cdn.jsdelivr.net/gh/Loyalsoldier/geoip@release/Country.mmdb
-- GEOSITE,category-ads,REJECT #简单广告过滤规则，要增加规则数可使用category-ads-all
-- GEOSITE,cn,DIRECT #国内域名直连规则
-- GEOIP,CN,DIRECT,no-resolve #国内IP直连规则
-- GEOSITE,cloudflare,🚀 节点选择 #CF域名规则
-- GEOIP,CLOUDFLARE,🚀 节点选择,no-resolve #CFIP规则
-- GEOSITE,gfw,🚀 节点选择 #GFW域名规则
-- GEOSITE,google,🚀 节点选择 #GOOGLE域名规则
-- GEOIP,GOOGLE,🚀 节点选择,no-resolve #GOOGLE IP规则
-- GEOSITE,netflix,🚀 节点选择 #奈飞域名规则
-- GEOIP,NETFLIX,🚀 节点选择,no-resolve #奈飞IP规则
-- GEOSITE,telegram,🚀 节点选择 #TG域名规则
-- GEOIP,TELEGRAM,🚀 节点选择,no-resolve #TG IP规则
-- GEOSITE,openai,🚀 节点选择 #GPT规则
-- MATCH,漏网之鱼
-`
+    const computeHash = (inputStr) => {
+        let hState = [
+            0xc1059ed8, 0x367cd507, 0x3070dd17, 0xf70e5939,
+            0xffc00b31, 0x68581511, 0x64f98fa7, 0xbefa4fa4
+        ];
+        const messageBitLength = inputStr.length * 8;
+        inputStr += String.fromCharCode(0x80);
+        while ((inputStr.length * 8) % 512 !== 448) {inputStr += String.fromCharCode(0)}
+        const highBits = Math.floor(messageBitLength / 0x100000000);
+        const lowBits = messageBitLength & 0xFFFFFFFF;
+        inputStr += String.fromCharCode(
+            (highBits >>> 24) & 0xFF, (highBits >>> 16) & 0xFF, (highBits >>> 8) & 0xFF, highBits & 0xFF,
+            (lowBits >>> 24) & 0xFF, (lowBits >>> 16) & 0xFF, (lowBits >>> 8) & 0xFF, lowBits & 0xFF
+        );
+        const words = [];
+        for (let i = 0; i < inputStr.length; i += 4) {
+            words.push((inputStr.charCodeAt(i) << 24) | (inputStr.charCodeAt(i + 1) << 16) | (inputStr.charCodeAt(i + 2) << 8) | inputStr.charCodeAt(i + 3));
+        }
+        for (let i = 0; i < words.length; i += 16) {
+            const w = new Array(64);
+            for (let j = 0; j < 16; j++) {
+                w[j] = words[i + j];
+            }
+            for (let j = 16; j < 64; j++) {
+                const s0 = rotateRight(w[j - 15], 7) ^ rotateRight(w[j - 15], 18) ^ (w[j - 15] >>> 3);
+                const s1 = rotateRight(w[j - 2], 17) ^ rotateRight(w[j - 2], 19) ^ (w[j - 2] >>> 10);
+                w[j] = (w[j - 16] + s0 + w[j - 7] + s1) >>> 0;
+            }
+            let [a, b, c, d, e, f, g, h] = hState;
+            for (let j = 0; j < 64; j++) {
+                const S1 = rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25);
+                const ch = (e & f) ^ (~e & g);
+                const temp1 = (h + S1 + ch + kConstants[j] + w[j]) >>> 0;
+                const S0 = rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22);
+                const maj = (a & b) ^ (a & c) ^ (b & c);
+                const temp2 = (S0 + maj) >>> 0;
+                h = g;
+                g = f;
+                f = e;
+                e = (d + temp1) >>> 0;
+                d = c;
+                c = b;
+                b = a;
+                a = (temp1 + temp2) >>> 0;
+            }
+            hState[0] = (hState[0] + a) >>> 0;
+            hState[1] = (hState[1] + b) >>> 0;
+            hState[2] = (hState[2] + c) >>> 0;
+            hState[3] = (hState[3] + d) >>> 0;
+            hState[4] = (hState[4] + e) >>> 0;
+            hState[5] = (hState[5] + f) >>> 0;
+            hState[6] = (hState[6] + g) >>> 0;
+            hState[7] = (hState[7] + h) >>> 0;
+        }
+        return hState.slice(0, 7);
+    };
+    const rotateRight = (value, shift) => {return ((value >>> shift) | (value << (32 - shift))) >>> 0};
+    const utf8Message = toUtf8(message);
+    const hashWords = computeHash(utf8Message);
+    return bytesToHex(hashWords.flatMap(h => [(h >>> 24) & 0xFF, (h >>> 16) & 0xFF, (h >>> 8) & 0xFF, h & 0xFF]));
 }
+const binaryAddrToString = (addrType, addrBytes) => {
+    if (addrType === 2) {
+        return utf8Decoder.decode(addrBytes);
+    } else if (addrType === 1) {
+        return `${addrBytes[0]}.${addrBytes[1]}.${addrBytes[2]}.${addrBytes[3]}`;
+    } else if (addrType === 3) {
+        const view = new DataView(addrBytes.buffer, addrBytes.byteOffset, addrBytes.byteLength);
+        const parts = [];
+        for (let i = 0; i < 8; i++) {parts.push(view.getUint16(i * 2).toString(16))}
+        return `[${parts.join(':')}]`;
+    }
+};
+const parseHostPort = (addr, defaultPort) => {
+    if (addr[0] !== '[') {
+        const lastColon = addr.lastIndexOf(':');
+        const host = addr.substring(0, lastColon);
+        const port = parseInt(addr.substring(lastColon + 1), 10);
+        return (lastColon > 0 && !host.includes(':') && !isNaN(port)) ? [host, port] : [addr, defaultPort];
+    }
+    const ipv6Match = addr.match(/^\[(.+)\](?::(\d+))?$/);
+    return ipv6Match ? [`[${ipv6Match[1]}]`, parseInt(ipv6Match[2] || defaultPort, 10)] : [addr, defaultPort];
+};
+const parseAuthString = (authParam) => {
+    let username = '', password = '', hostStr;
+    const atIndex = authParam.lastIndexOf('@');
+    if (atIndex === -1) {hostStr = authParam} else {
+        const cred = authParam.slice(0, atIndex);
+        hostStr = authParam.slice(atIndex + 1);
+        const colonIndex = cred.indexOf(':');
+        if (colonIndex === -1) {username = cred} else {
+            username = cred.slice(0, colonIndex);
+            password = cred.slice(colonIndex + 1);
+        }
+    }
+    const [hostname, port] = parseHostPort(hostStr, 1080);
+    return {username, password, hostname, port};
+};
+const isIPv4optimized = (str) => {
+    if (str.length > 15 || str.length < 7) return false;
+    let part = 0, dots = 0, partLen = 0;
+    for (let i = 0; i < str.length; i++) {
+        const charCode = str.charCodeAt(i);
+        if (charCode === 46) {
+            dots++;
+            if (dots > 3 || partLen === 0 || (str.charCodeAt(i - 1) === 48 && partLen > 1)) return false;
+            part = 0;
+            partLen = 0;
+        } else if (charCode >= 48 && charCode <= 57) {
+            partLen++;
+            part = part * 10 + (charCode - 48);
+            if (part > 255 || partLen > 3) return false;
+        } else {return false}
+    }
+    return !(dots !== 3 || partLen === 0 || (str.charCodeAt(str.length - partLen) === 48 && partLen > 1));
+};
+const isDomainName = (inputStr) => {
+    if (!inputStr || inputStr[0] === '[') return false;
+    if (inputStr[0].charCodeAt(0) < 48 || inputStr[0].charCodeAt(0) > 57) return true;
+    return !isIPv4optimized(inputStr);
+};
+const concurrentConnect = async (hostname, port, addrType) => {
+    if (concurrentOnlyDomain && addrType !== 2) {
+        const socket = connect({hostname, port});
+        return socket.opened.then(() => socket);
+    }
+    const socketPromises = Array(concurrency).fill(null).map(async () => {
+        const socket = connect({hostname, port});
+        return socket.opened.then(() => socket);
+    });
+    return await Promise.any(socketPromises);
+};
+const connectViaSocksProxy = async (targetAddrType, targetPortNum, socksAuth, targetAddrBytes) => {
+    const addrType = isDomainName(socksAuth.hostname) ? 2 : 0;
+    const socksSocket = await concurrentConnect(socksAuth.hostname, socksAuth.port, addrType);
+    const writer = socksSocket.writable.getWriter();
+    const reader = socksSocket.readable.getReader();
+    try {
+        await writer.write(socks5Init);
+        const {value: authMethodResponse} = await reader.read();
+        if (!authMethodResponse || authMethodResponse[0] !== 5 || authMethodResponse[1] === 0xFF) return null;
+        if (authMethodResponse[1] === 2) {
+            if (!socksAuth.username) return null;
+            const userBytes = textEncoder.encode(socksAuth.username);
+            const passBytes = textEncoder.encode(socksAuth.password || '');
+            const authPayload = new Uint8Array(3 + userBytes.length + passBytes.length);
+            authPayload[0] = 1;
+            authPayload[1] = userBytes.length;
+            authPayload.set(userBytes, 2);
+            authPayload[2 + userBytes.length] = passBytes.length;
+            authPayload.set(passBytes, 3 + userBytes.length);
+            await writer.write(authPayload);
+            const {value: authResult} = await reader.read();
+            if (!authResult || authResult[0] !== 1 || authResult[1] !== 0) return null;
+        } else if (authMethodResponse[1] !== 0) return null;
+        let addressPart, atyp;
+        if (targetAddrType === 2) {
+            atyp = 3;
+            addressPart = new Uint8Array(1 + targetAddrBytes.length);
+            addressPart[0] = targetAddrBytes.length;
+            addressPart.set(targetAddrBytes, 1);
+        } else if (targetAddrType === 1) {
+            atyp = 1;
+            addressPart = targetAddrBytes;
+        } else if (targetAddrType === 3) {
+            atyp = 4;
+            addressPart = targetAddrBytes;
+        }
+        const cmd = new Uint8Array(4 + addressPart.length + 2);
+        cmd.set([5, 1, 0, atyp]);
+        cmd.set(addressPart, 4);
+        new DataView(cmd.buffer).setUint16(4 + addressPart.length, targetPortNum, false);
+        await writer.write(cmd);
+        const {value: finalResponse} = await reader.read();
+        if (!finalResponse || finalResponse[1] !== 0) return null;
+        return socksSocket;
+    } finally {
+        writer.releaseLock();
+        reader.releaseLock();
+    }
+};
+const findSequence = (chunks, sequence) => {
+    const seqLen = sequence.length;
+    if (seqLen === 0) return 0;
+    let totalLen = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+    if (totalLen < seqLen) return -1;
+    const combined = new Uint8Array(totalLen);
+    let offset = 0;
+    for (const chunk of chunks) {
+        combined.set(chunk, offset);
+        offset += chunk.length;
+    }
+    for (let i = 0; i <= combined.length - seqLen; i++) {
+        let found = true;
+        for (let j = 0; j < seqLen; j++) {
+            if (combined[i + j] !== sequence[j]) {
+                found = false;
+                break;
+            }
+        }
+        if (found) return i;
+    }
+    return -1;
+};
+const connectViaHttpProxy = async (targetAddrType, targetPortNum, httpAuth, targetAddrBytes) => {
+    const {username, password, hostname, port} = httpAuth;
+    const addrType = isDomainName(hostname) ? 2 : 0;
+    const proxySocket = await concurrentConnect(hostname, port, addrType);
+    const writer = proxySocket.writable.getWriter();
+    const requestHeaders = [
+        `CONNECT ${binaryAddrToString(targetAddrType, targetAddrBytes)}:${targetPortNum} HTTP/1.1`,
+        `Host: ${binaryAddrToString(targetAddrType, targetAddrBytes)}:${targetPortNum}`
+    ];
+    if (username) requestHeaders.push(`Proxy-Authorization: Basic ${btoa(`${username}:${password || ''}`)}`);
+    requestHeaders.push('Proxy-Connection: Keep-Alive', 'Connection: Keep-Alive', '\r\n');
+    await writer.write(textEncoder.encode(requestHeaders.join('\r\n')));
+    writer.releaseLock();
+    const reader = proxySocket.readable.getReader();
+    const chunks = [];
+    const headerEndSequence = new Uint8Array([13, 10, 13, 10]);
+    let headerFound = false;
+    try {
+        while (!headerFound) {
+            const {value, done} = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            if (findSequence(chunks, headerEndSequence) !== -1) headerFound = true;
+        }
+        if (!headerFound) {
+            await proxySocket.close();
+            return null;
+        }
+        let totalLen = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+        const combined = new Uint8Array(totalLen);
+        let offset = 0;
+        for (const chunk of chunks) {
+            combined.set(chunk, offset);
+            offset += chunk.length;
+        }
+        const responseStr = utf8Decoder.decode(combined.subarray(0, 20));
+        if (!responseStr.startsWith('HTTP/1.1 200') && !responseStr.startsWith('HTTP/1.0 200')) {
+            await proxySocket.close();
+            return null;
+        }
+        reader.releaseLock();
+        return proxySocket;
+    } catch {
+        reader.releaseLock();
+        await proxySocket.close();
+        return null;
+    }
+};
+const parseRequestData = (firstChunk) => {
+    const dataView = new DataView(firstChunk.buffer);
+    if (dataView.getBigUint64(1) !== uuidPart1 || dataView.getBigUint64(9) !== uuidPart2) return null;
+    let offset = 17 + firstChunk[17] + 1;
+    const command = firstChunk[offset++];
+    const port = dataView.getUint16(offset);
+    if (command !== 1 && port !== 53) return null;
+    offset += 2;
+    const addrType = firstChunk[offset++];
+    let newOffset;
+    if (addrType === 2) {
+        const len = firstChunk[offset++];
+        newOffset = offset + len;
+    } else if (addrType === 1) {
+        newOffset = offset + 4;
+    } else if (addrType === 3) {
+        newOffset = offset + 16;
+    }
+    const targetAddrBytes = firstChunk.subarray(offset, newOffset);
+    return {addrType: addrType, port, targetAddrBytes, dataOffset: newOffset, isDns: port === 53};
+};
+const parseTransparent = (firstChunk) => {
+    const dataView = new DataView(firstChunk.buffer);
+    for (let i = 0; i < 56; i++) {if (firstChunk[i] !== expectedHashBytes[i]) return null}
+    let offset = 58;
+    if (firstChunk[offset++] !== 1) return null;
+    const rawAddrType = firstChunk[offset++];
+    let newOffset, addrType;
+    if (rawAddrType === 3) {
+        addrType = 2;
+        const len = firstChunk[offset++];
+        newOffset = offset + len;
+    } else if (rawAddrType === 1) {
+        addrType = 1;
+        newOffset = offset + 4;
+    } else if (rawAddrType === 4) {
+        addrType = 3;
+        newOffset = offset + 16;
+    }
+    const targetAddrBytes = firstChunk.subarray(offset, newOffset);
+    const port = dataView.getUint16(newOffset);
+    return {addrType: addrType, port, targetAddrBytes, dataOffset: newOffset + 4, isDns: port === 53};
+}
+const strategyExecutorMap = new Map([
+    [0, async ({addrType, port, targetAddrBytes}) => {
+        const hostname = binaryAddrToString(addrType, targetAddrBytes);
+        return concurrentConnect(hostname, port, addrType);
+    }],
+    [1, async ({addrType, port, targetAddrBytes}, param) => {
+        const socksAuth = parseAuthString(param);
+        return connectViaSocksProxy(addrType, port, socksAuth, targetAddrBytes);
+    }],
+    [2, async ({addrType, port, targetAddrBytes}, param) => {
+        const httpAuth = parseAuthString(param);
+        return connectViaHttpProxy(addrType, port, httpAuth, targetAddrBytes);
+    }],
+    [3, async (_parsedRequest, _param, {proxyHost, proxyPort}) => {
+        const addrType = isDomainName(proxyHost) ? 2 : 0;
+        return concurrentConnect(proxyHost, proxyPort, addrType);
+    }],
+    [4, async (_parsedRequest, _param, _proxyHost) => {
+        return concurrentConnect(finallyProxyHost, 443, 2);
+    }]
+]);
+const prepareProxyConfig = (request) => {
+    let url;
+    if (request.url.includes('%3F')) {
+        try {url = new URL(decodeURIComponent(request.url))} catch {}
+    } else {url = new URL(request.url)}
+    const socksParam = url.searchParams.get('socks5');
+    const httpParam = url.searchParams.get('http');
+    const proxyAll = url.searchParams.has('proxyall');
+    const connectionStrategies = [];
+    const mapToStrategies = (param, type) => {
+        if (!param) return [];
+        return param.split(',').filter(Boolean).map(p => ({type, param: p.trim()}));
+    };
+    if (proxyAll) {
+        connectionStrategies.push(...mapToStrategies(socksParam, 1));
+        connectionStrategies.push(...mapToStrategies(httpParam, 2));
+        if (connectionStrategies.length === 0) connectionStrategies.push({type: 0});
+    } else {
+        connectionStrategies.push({type: 0});
+        connectionStrategies.push(...mapToStrategies(socksParam, 1));
+        connectionStrategies.push(...mapToStrategies(httpParam, 2));
+        connectionStrategies.push({type: 3});
+        connectionStrategies.push({type: 4});
+    }
+    const proxyString = url.searchParams.get('proxyip') ?? coloToProxyMap.get(request.cf?.colo) ?? proxyIpAddrs.US;
+    const [proxyHost, proxyPort] = parseHostPort(proxyString, 443);
+    return {connectionStrategies, proxyHost, proxyPort};
+};
+const dohDnsHandler = (webSocket) => {
+    return async (payload) => {
+        if (payload.byteLength < 2) throw new Error();
+        const dnsQueryData = payload.subarray(2);
+        const resp = await Promise.any(dohEndpoints.map(endpoint =>
+            fetch(endpoint, {...dohFetchOptions, body: dnsQueryData})
+                .then(response => {
+                    if (!response.ok) throw new Error();
+                    return response;
+                })
+        ));
+        const dnsQueryResult = await resp.arrayBuffer();
+        if (webSocket.readyState !== WebSocket.OPEN) throw new Error();
+        const udpSize = dnsQueryResult.byteLength;
+        const udpSizeBuffer = new Uint8Array([(udpSize >> 8) & 0xff, udpSize & 0xff]);
+        const packet = new Uint8Array(udpSizeBuffer.length + udpSize);
+        packet.set(udpSizeBuffer, 0);
+        packet.set(new Uint8Array(dnsQueryResult), udpSizeBuffer.length);
+        webSocket.send(packet);
+    };
+};
+const pipeTcpToWebSocket = async (tcpSocket, webSocket) => {
+    await tcpSocket.readable.pipeTo(
+        new WritableStream({
+            write: chunk => {
+                if (webSocket.readyState !== WebSocket.OPEN) return;
+                webSocket.send(chunk);
+            }
+        }),
+        {preventClose: true}
+    );
+};
+const handleWebSocketConn = async (request) => {
+    const {0: clientSocket, 1: webSocket} = new WebSocketPair();
+    webSocket.accept();
+    const protocolHeader = request.headers.get('sec-websocket-protocol');
+    const earlyData = protocolHeader ? Uint8Array.fromBase64(protocolHeader, {alphabet: 'base64url'}) : null;
+    const webSocketStream = new ReadableStream({
+        start(controller) {
+            if (earlyData) controller.enqueue(earlyData);
+            webSocket.addEventListener("message", event => controller.enqueue(new Uint8Array(event.data)));
+        },
+        cancel() {webSocket?.close()}
+    });
+    const tcpSocketHolder = {value: null};
+    let messageHandler = null;
+    webSocketStream.pipeTo(new WritableStream({
+        async write(chunk) {
+            if (messageHandler) return messageHandler(chunk);
+            let parsedRequest;
+            if (chunk[56] === 0x0d && chunk[57] === 0x0a) {
+                parsedRequest = parseTransparent(chunk);
+            } else {
+                parsedRequest = parseRequestData(chunk);
+                webSocket.send(new Uint8Array([chunk[0], 0]));
+            }
+            if (!parsedRequest) throw new Error();
+            const payload = chunk.subarray(parsedRequest.dataOffset);
+            if (parsedRequest.isDns) {
+                messageHandler = dohDnsHandler(webSocket);
+                await messageHandler(payload);
+            } else {
+                const {connectionStrategies, proxyHost, proxyPort} = prepareProxyConfig(request);
+                let tcpSocket = null;
+                for (const strategy of connectionStrategies) {
+                    const executor = strategyExecutorMap.get(strategy.type);
+                    if (!executor) continue;
+                    try {
+                        tcpSocket = await executor(parsedRequest, strategy.param, {proxyHost, proxyPort});
+                        if (tcpSocket) break;
+                    } catch {}
+                }
+                tcpSocketHolder.value = tcpSocket;
+                const tcpWriter = tcpSocket.writable.getWriter();
+                messageHandler = (chunk) => tcpWriter.write(chunk);
+                if (payload.byteLength) await messageHandler(payload)
+                pipeTcpToWebSocket(tcpSocket, webSocket);
+            }
+        }
+    }))
+        .finally(() => {
+            tcpSocketHolder.value?.close();
+            webSocket?.close()
+        });
+    return new Response(null, {status: 101, webSocket: clientSocket});
+};
+export default {
+    async fetch(request) {
+        return request.headers.get('Upgrade')?.toLowerCase() === 'websocket'
+            ? handleWebSocketConn(request)
+            : new Response(html, {status: 404, headers: {'Content-Type': 'text/html; charset=UTF-8'}});
+    }
+};
