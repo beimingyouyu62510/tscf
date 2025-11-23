@@ -37,7 +37,7 @@ import { connect } from 'cloudflare:sockets';
 // ==================== 1. 全局配置 ====================
 const CONFIG = {
     密钥: "511622", // 务必修改
-    默认兜底反代: "cf.jisucf.cloudns.ch",
+    默认兜底反代: "64.64.227.102:449",
     
     // 策略开关
     启用普通反代: true,
